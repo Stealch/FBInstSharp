@@ -127,7 +127,7 @@ namespace FBINSTSharp.Core.Services
             public IntPtr Reserved;
         }
 
-        public bool Open(string devicePath)
+        public bool Open(string devicePath, bool readOnly = false)
         {
             if (string.IsNullOrEmpty(devicePath))
                 throw new ArgumentException("Device path cannot be null or empty", nameof(devicePath));
@@ -157,9 +157,12 @@ namespace FBINSTSharp.Core.Services
 
             _devicePath = windowsPath;
 
+            // Используем параметр readOnly для определения доступа
+            uint desiredAccess = readOnly ? GENERIC_READ : (GENERIC_READ | GENERIC_WRITE);
+
             _handle = CreateFile(
                 windowsPath,
-                GENERIC_READ | GENERIC_WRITE,
+                desiredAccess,
                 FILE_SHARE_READ | FILE_SHARE_WRITE,
                 IntPtr.Zero,
                 OPEN_EXISTING,
@@ -184,7 +187,6 @@ namespace FBINSTSharp.Core.Services
         private bool GetDriveGeometry()
         {
             byte[] lenBuffer = new byte[8];
-            uint bytesReturned;
 
             bool result = DeviceIoControl(
                 _handle,
@@ -193,7 +195,7 @@ namespace FBINSTSharp.Core.Services
                 0,
                 Marshal.UnsafeAddrOfPinnedArrayElement(lenBuffer, 0),
                 (uint)lenBuffer.Length,
-                out bytesReturned,
+                out uint bytesReturned,
                 IntPtr.Zero);
 
             if (!result)
@@ -244,6 +246,8 @@ namespace FBINSTSharp.Core.Services
         }
 
         public ulong GetTotalSectors() => _totalSectors;
+
+        public ulong GetTotalBytes() => _totalSectors * _bytesPerSector;
 
         public (uint SectorsPerTrack, uint TracksPerCylinder, uint BytesPerSector) GetGeometry()
         {
@@ -312,8 +316,7 @@ namespace FBINSTSharp.Core.Services
             if (_handle == null || _handle.IsInvalid)
                 return false;
 
-            uint bytesReturned;
-            return DeviceIoControl(_handle, FSCTL_LOCK_VOLUME, IntPtr.Zero, 0, IntPtr.Zero, 0, out bytesReturned, IntPtr.Zero);
+            return DeviceIoControl(_handle, FSCTL_LOCK_VOLUME, IntPtr.Zero, 0, IntPtr.Zero, 0, out uint bytesReturned, IntPtr.Zero);
         }
 
         public bool UnlockVolume()
@@ -321,8 +324,7 @@ namespace FBINSTSharp.Core.Services
             if (_handle == null || _handle.IsInvalid)
                 return false;
 
-            uint bytesReturned;
-            return DeviceIoControl(_handle, FSCTL_UNLOCK_VOLUME, IntPtr.Zero, 0, IntPtr.Zero, 0, out bytesReturned, IntPtr.Zero);
+            return DeviceIoControl(_handle, FSCTL_UNLOCK_VOLUME, IntPtr.Zero, 0, IntPtr.Zero, 0, out uint bytesReturned, IntPtr.Zero);
         }
 
         public bool DismountVolume()
@@ -330,8 +332,7 @@ namespace FBINSTSharp.Core.Services
             if (_handle == null || _handle.IsInvalid)
                 return false;
 
-            uint bytesReturned;
-            return DeviceIoControl(_handle, FSCTL_DISMOUNT_VOLUME, IntPtr.Zero, 0, IntPtr.Zero, 0, out bytesReturned, IntPtr.Zero);
+            return DeviceIoControl(_handle, FSCTL_DISMOUNT_VOLUME, IntPtr.Zero, 0, IntPtr.Zero, 0, out uint bytesReturned, IntPtr.Zero);
         }
 
         public bool IsRemovable
@@ -370,7 +371,6 @@ namespace FBINSTSharp.Core.Services
         private StorageDeviceNumber? GetDeviceNumber(SafeFileHandle handle)
         {
             byte[] buffer = new byte[12];
-            uint bytesReturned;
 
             bool result = DeviceIoControl(
                 handle,
@@ -379,7 +379,7 @@ namespace FBINSTSharp.Core.Services
                 0,
                 Marshal.UnsafeAddrOfPinnedArrayElement(buffer, 0),
                 (uint)buffer.Length,
-                out bytesReturned,
+                out uint bytesReturned,
                 IntPtr.Zero);
 
             if (!result || bytesReturned < 12)
@@ -479,17 +479,15 @@ namespace FBINSTSharp.Core.Services
                         continue;
 
                     byte[] buffer = new byte[256];
-                    uint propertyRegDataType;
-                    uint requiredSize;
 
                     if (SetupDiGetDeviceRegistryProperty(
                         deviceInfoSet,
                         ref deviceInfoData,
                         SPDRP_REMOVABLE,
-                        out propertyRegDataType,
+                        out uint propertyRegDataType,
                         buffer,
                         (uint)buffer.Length,
-                        out requiredSize))
+                        out uint requiredSize))
                     {
                         return BitConverter.ToBoolean(buffer, 0);
                     }
@@ -508,20 +506,44 @@ namespace FBINSTSharp.Core.Services
         private string GetDevicePathFromDevInfo(IntPtr deviceInfoSet, ref SP_DEVINFO_DATA deviceInfoData)
         {
             byte[] buffer = new byte[512];
-            uint requiredSize;
 
             if (!SetupDiGetDeviceInstanceId(
                 deviceInfoSet,
                 ref deviceInfoData,
                 buffer,
                 (uint)buffer.Length,
-                out requiredSize))
+                out uint requiredSize))
             {
                 return null;
             }
 
             string instanceId = System.Text.Encoding.Unicode.GetString(buffer).TrimEnd('\0');
             return $@"\\.\{instanceId}";
+        }
+
+        public DiskInfo GetDiskInfo()
+        {
+            return new DiskInfo
+            {
+                TotalSectors = _totalSectors,
+                TotalBytes = _totalSectors * _bytesPerSector,
+                BytesPerSector = _bytesPerSector,
+                SectorsPerTrack = _sectorsPerTrack,
+                TracksPerCylinder = _tracksPerCylinder,
+                IsRemovable = IsRemovable,
+                DevicePath = _devicePath
+            };
+        }
+
+        public struct DiskInfo
+        {
+            public ulong TotalSectors;
+            public ulong TotalBytes;
+            public uint BytesPerSector;
+            public uint SectorsPerTrack;
+            public uint TracksPerCylinder;
+            public bool IsRemovable;
+            public string DevicePath;
         }
 
         public void Dispose()

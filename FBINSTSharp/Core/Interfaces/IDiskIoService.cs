@@ -9,8 +9,9 @@ namespace FBINSTSharp.Core.Interfaces
         /// Открывает устройство для работы.
         /// </summary>
         /// <param name="devicePath">Путь вида \\.\PHYSICALDRIVE1 или (hd1)</param>
+        /// <param name="readOnly">Открывать только для чтения (не требует прав на запись)</param>
         /// <returns>true если успешно</returns>
-        bool Open(string devicePath);
+        bool Open(string devicePath, bool readOnly = false);
 
         /// <summary>
         /// Закрывает устройство.

@@ -560,8 +560,9 @@ Commands:
             Console.WriteLine("Listing available disks...");
             Console.WriteLine("");
 
-            // Перебираем возможные физические диски (0-20, как в MAX_DISKS)
             bool foundAny = false;
+
+            // Перебираем диски от 0 до 19 (как в оригинальном fbinst)
             for (int diskNumber = 0; diskNumber < 20; diskNumber++)
             {
                 string devicePath = $@"\\.\PHYSICALDRIVE{diskNumber}";
@@ -569,46 +570,21 @@ Commands:
 
                 try
                 {
-                    // Пытаемся открыть устройство только для чтения, без блокировки
                     using var diskIo = new DiskIoService();
-                    // Временно: используем Open, но для получения инфы без записи
-                    // Можно модифицировать Open, чтобы позволять открывать в режиме ReadOnly
-                    // Но пока используем существующий Open (он открывает с GENERIC_READ|GENERIC_WRITE)
-                    // Для безопасности: если открыть не удаётся из-за прав, пробуем открыть для чтения
-                    bool opened = false;
-                    try
-                    {
-                        opened = diskIo.Open(devicePath);
-                    }
-                    catch
-                    {
-                        // Если не удалось открыть с записью, игнорируем
-                        continue;
-                    }
 
-                    if (!opened)
+                    // Открываем только для чтения, чтобы не требовать прав на запись
+                    if (!diskIo.Open(devicePath, readOnly: true))
                         continue;
 
                     foundAny = true;
 
                     // Получаем информацию
-                    ulong totalSectors = diskIo.GetTotalSectors();
-                    ulong totalBytes = totalSectors * 512;
+                    var info = diskIo.GetDiskInfo();
 
-                    // Форматируем размер
-                    string sizeStr;
-                    if (totalBytes >= 1024UL * 1024 * 1024 * 1024) // TB
-                        sizeStr = $"{totalBytes / (1024UL * 1024 * 1024 * 1024)} TB";
-                    else if (totalBytes >= 1024UL * 1024 * 1024) // GB
-                        sizeStr = $"{totalBytes / (1024UL * 1024 * 1024)} GB";
-                    else if (totalBytes >= 1024UL * 1024) // MB
-                        sizeStr = $"{totalBytes / (1024UL * 1024)} MB";
-                    else
-                        sizeStr = $"{totalBytes / 1024} KB";
+                    // Форматируем размер в человекочитаемый вид
+                    string sizeStr = FormatSize(info.TotalBytes);
 
-                    bool isRemovable = diskIo.IsRemovable;
-
-                    // Пытаемся прочитать MBR для проверки на fbinst
+                    // Проверяем наличие fbinst в MBR
                     string marker = "";
                     try
                     {
@@ -621,14 +597,14 @@ Commands:
                     }
                     catch
                     {
-                        // Если не удалось прочитать MBR, просто игнорируем
+                        // Если не удалось прочитать MBR (нет прав или диск защищён), просто игнорируем
                     }
 
-                    Console.WriteLine($"{displayName}: {totalSectors} sectors ({sizeStr}){(isRemovable ? " [removable]" : "")}{marker}");
+                    Console.WriteLine($"{displayName}: {info.TotalSectors} sectors ({sizeStr}){(info.IsRemovable ? " [removable]" : "")}{marker}");
                 }
                 catch
                 {
-                    // Устройство не существует или недоступно
+                    // Устройство не существует или недоступно — просто пропускаем
                     continue;
                 }
             }
@@ -637,6 +613,27 @@ Commands:
             {
                 Console.WriteLine("No disks found.");
             }
+            else
+            {
+                Console.WriteLine("");
+                Console.WriteLine("Hint: use (hdN) for device path, e.g. (hd0) for the first disk.");
+            }
+        }
+
+        /// <summary>
+        /// Форматирует размер в байтах в человекочитаемый вид.
+        /// </summary>
+        private static string FormatSize(ulong bytes)
+        {
+            if (bytes >= 1024UL * 1024 * 1024 * 1024) // TB
+                return $"{bytes / (1024UL * 1024 * 1024 * 1024)} TB";
+            if (bytes >= 1024UL * 1024 * 1024) // GB
+                return $"{bytes / (1024UL * 1024 * 1024)} GB";
+            if (bytes >= 1024UL * 1024) // MB
+                return $"{bytes / (1024UL * 1024)} MB";
+            if (bytes >= 1024UL) // KB
+                return $"{bytes / 1024} KB";
+            return $"{bytes} B";
         }
 
         #endregion
