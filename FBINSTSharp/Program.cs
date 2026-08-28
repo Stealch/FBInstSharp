@@ -532,11 +532,6 @@ Commands:
 
         static void ListDevices()
         {
-            Console.WriteLine("Listing available disks...");
-            Console.WriteLine("");
-
-            bool foundAny = false;
-
             for (int diskNumber = 0; diskNumber < 20; diskNumber++)
             {
                 string devicePath = $@"\\.\PHYSICALDRIVE{diskNumber}";
@@ -548,9 +543,18 @@ Commands:
                     if (!diskIo.Open(devicePath, readOnly: true))
                         continue;
 
-                    foundAny = true;
-                    var info = diskIo.GetDiskInfo();
-                    string sizeStr = FormatSize(info.TotalBytes);
+                    ulong totalSectors = diskIo.GetTotalSectors();
+
+                    // Точная формула из оригинального fbinst.c
+                    ulong sizeInGB;
+                    if (totalSectors >= (3UL << 20)) // 3 * 1024 * 1024 = 3,145,728 секторов (~1.5 ГБ)
+                    {
+                        sizeInGB = (totalSectors + (1UL << 20)) >> 21; // (size + 1,048,576) / 2,097,152
+                    }
+                    else
+                    {
+                        sizeInGB = (totalSectors + (1UL << 10)) >> 11; // (size + 1024) / 2048 (в МБ)
+                    }
 
                     string marker = "";
                     try
@@ -558,28 +562,16 @@ Commands:
                         byte[] mbr = diskIo.ReadSectors(0, 1);
                         uint fbMagic = BitConverter.ToUInt32(mbr, 0x1B4);
                         if (fbMagic == 0x46424246)
-                        {
-                            marker = " [fbinst]";
-                        }
+                            marker = " *";
                     }
                     catch { }
 
-                    Console.WriteLine($"{displayName}: {info.TotalSectors} sectors ({sizeStr}){(info.IsRemovable ? " [removable]" : "")}{marker}");
+                    Console.WriteLine($"{displayName}: {totalSectors} ({sizeInGB}g){marker}");
                 }
                 catch
                 {
                     continue;
                 }
-            }
-
-            if (!foundAny)
-            {
-                Console.WriteLine("No disks found.");
-            }
-            else
-            {
-                Console.WriteLine("");
-                Console.WriteLine("Hint: use (hdN) for device path, e.g. (hd0) for the first disk.");
             }
         }
 
