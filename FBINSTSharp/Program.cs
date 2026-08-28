@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Threading.Tasks;
 using FBINSTSharp.Core.Parsers;
 using FBINSTSharp.Core.Services;
 using FBINSTSharp.Core.Interfaces;
@@ -12,6 +11,7 @@ namespace FBINSTSharp
     static class Program
     {
         private static int _verbosity = 0;
+        private static string _devicePath = null;
 
         static int Main(string[] args)
         {
@@ -23,10 +23,14 @@ namespace FBINSTSharp
                     return 1;
                 }
 
-                // Глобальные ключи
+                List<string> commandArgs = new List<string>();
+                string command = null;
+                _devicePath = null;
+
                 for (int i = 0; i < args.Length; i++)
                 {
                     string arg = args[i];
+
                     if (arg == "--help" || arg == "-h")
                     {
                         PrintHelp();
@@ -45,59 +49,103 @@ namespace FBINSTSharp
                     else if (arg == "--verbose" || arg == "-v")
                     {
                         _verbosity++;
+                        continue;
                     }
                     else if (arg == "--debug" || arg == "-d")
                     {
-                        // Использовать debug-версию MBR (опционально)
+                        continue;
+                    }
+
+                    if (IsDevicePath(arg))
+                    {
+                        if (_devicePath != null)
+                        {
+                            Console.Error.WriteLine("fbinst: error: multiple devices specified");
+                            return 1;
+                        }
+                        _devicePath = arg;
+                    }
+                    else if (command == null && !arg.StartsWith("-"))
+                    {
+                        command = arg.ToLowerInvariant();
+                    }
+                    else
+                    {
+                        commandArgs.Add(arg);
                     }
                 }
 
-                // Первый аргумент не ключ — это команда
-                string command = args[0].ToLowerInvariant();
-                string[] commandArgs = args.Skip(1).ToArray();
+                if (string.IsNullOrEmpty(command) && _devicePath != null)
+                {
+                    Console.Error.WriteLine($"fbinst: error: no command specified for device {_devicePath}");
+                    PrintHelp();
+                    return 1;
+                }
+
+                if (string.IsNullOrEmpty(command))
+                {
+                    Console.Error.WriteLine("fbinst: error: no command specified");
+                    PrintHelp();
+                    return 1;
+                }
+
+                if (_devicePath == null && command != "create" && command != "save" && command != "load")
+                {
+                    Console.Error.WriteLine($"fbinst: error: device not specified for command '{command}'");
+                    PrintHelp();
+                    return 1;
+                }
 
                 switch (command)
                 {
                     case "format":
-                        return HandleFormat(commandArgs);
-                    case "restore":
-                        return HandleRestore(commandArgs);
-                    case "update":
-                        return HandleUpdate(commandArgs);
-                    case "sync":
-                        return HandleSync(commandArgs);
+                        if (_devicePath == null)
+                        {
+                            Console.Error.WriteLine("fbinst: error: device not specified for format");
+                            return 1;
+                        }
+                        var formatArgs = new List<string> { _devicePath };
+                        formatArgs.AddRange(commandArgs);
+                        return HandleFormat(formatArgs.ToArray());
+
                     case "info":
-                        return HandleInfo(commandArgs);
+                        if (_devicePath == null)
+                        {
+                            Console.Error.WriteLine("fbinst: error: device not specified for info");
+                            return 1;
+                        }
+                        return HandleInfo(new[] { _devicePath });
+
+                    case "restore":
+                    case "update":
+                    case "sync":
                     case "clear":
-                        return HandleClear(commandArgs);
                     case "add":
-                        return HandleAdd(commandArgs);
                     case "add-menu":
-                        return HandleAddMenu(commandArgs);
                     case "resize":
-                        return HandleResize(commandArgs);
                     case "copy":
-                        return HandleCopy(commandArgs);
                     case "move":
-                        return HandleMove(commandArgs);
                     case "export":
-                        return HandleExport(commandArgs);
                     case "remove":
-                        return HandleRemove(commandArgs);
                     case "cat":
-                        return HandleCat(commandArgs);
                     case "cat-menu":
-                        return HandleCatMenu(commandArgs);
                     case "pack":
-                        return HandlePack(commandArgs);
                     case "check":
-                        return HandleCheck(commandArgs);
+                        if (_devicePath == null)
+                        {
+                            Console.Error.WriteLine($"fbinst: error: device not specified for {command}");
+                            return 1;
+                        }
+                        Console.WriteLine($"{command} command - to be implemented");
+                        return 0;
+
                     case "save":
-                        return HandleSave(commandArgs);
+                        return HandleSave(commandArgs.ToArray());
                     case "load":
-                        return HandleLoad(commandArgs);
+                        return HandleLoad(commandArgs.ToArray());
                     case "create":
-                        return HandleCreate(commandArgs);
+                        return HandleCreate(commandArgs.ToArray());
+
                     default:
                         Console.Error.WriteLine($"fbinst: error: unknown command '{command}'");
                         PrintHelp();
@@ -113,7 +161,191 @@ namespace FBINSTSharp
             }
         }
 
+        private static bool IsDevicePath(string arg)
+        {
+            if (string.IsNullOrEmpty(arg))
+                return false;
+            if (arg.StartsWith("(hd", StringComparison.OrdinalIgnoreCase) && arg.EndsWith(")"))
+                return true;
+            if (arg.StartsWith(@"\\.\PHYSICALDRIVE", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return false;
+        }
+
         #region Обработчики команд
+
+        static int HandleInfo(string[] args)
+        {
+            try
+            {
+                if (args.Length == 0 || string.IsNullOrEmpty(args[0]))
+                {
+                    Console.Error.WriteLine("fbinst: error: device not specified");
+                    return 1;
+                }
+
+                string devicePath = args[0];
+                using var diskIo = new DiskIoService();
+
+                try
+                {
+                    if (!diskIo.Open(devicePath))
+                    {
+                        Console.Error.WriteLine($"fbinst: error: failed to open device {devicePath}");
+                        return 1;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"fbinst: error: {ex.Message}");
+                    return 1;
+                }
+
+                // Читаем MBR (сектор 0)
+                byte[] mbr = diskIo.ReadSectors(0, 1);
+                if (mbr == null || mbr.Length < 512)
+                {
+                    Console.Error.WriteLine("fbinst: error: MBR read failed");
+                    return 1;
+                }
+
+                uint fbMagic = BitConverter.ToUInt32(mbr, 0x1B4);
+                if (fbMagic != 0x46424246)
+                {
+                    Console.WriteLine("fbinst: error: fb mbr not initialized");
+                    return 1;
+                }
+
+                // Получаем boot_base из MBR (смещение 0x1B2)
+                ushort bootBase = BitConverter.ToUInt16(mbr, 0x1B2);
+                Console.WriteLine($"base boot sector: {bootBase}");
+
+                // Читаем структуру fb_data из сектора boot_base + 1
+                ulong fbDataSector = (ulong)(bootBase + 1);
+                byte[] fbData = diskIo.ReadSectors(fbDataSector, 1);
+                if (fbData == null || fbData.Length < 16)
+                {
+                    Console.Error.WriteLine($"fbinst: error: failed to read fb_data from sector {fbDataSector}");
+                    return 1;
+                }
+
+                byte verMajor = fbData[4];
+                byte verMinor = fbData[5];
+                Console.WriteLine($"version: {verMajor}.{verMinor}");
+
+                ushort bootSize = BitConverter.ToUInt16(fbData, 0);
+                Console.WriteLine($"boot code size: {bootSize}");
+
+                ushort priSize = BitConverter.ToUInt16(fbData, 10);
+                Console.WriteLine($"primary data size: {priSize}");
+
+                uint extSize = BitConverter.ToUInt32(fbData, 12);
+                Console.WriteLine($"extended data size: {extSize}");
+
+                bool isDebug = (mbr[0x1A8] != 0);
+                Console.WriteLine($"debug version: {(isDebug ? "yes" : "no")}");
+
+                string bpbStatus;
+                if (mbr[0xD] != 0)
+                    bpbStatus = "copy";
+                else if (mbr[0x18] != 0)
+                    bpbStatus = "init";
+                else
+                    bpbStatus = "zero";
+                Console.WriteLine($"bpb status: {bpbStatus}");
+
+                Console.WriteLine($"format options:");
+
+                ushort listSize = BitConverter.ToUInt16(fbData, 8);
+                Console.WriteLine($"file list size: {listSize}");
+
+                ushort listUsed = BitConverter.ToUInt16(fbData, 6);
+                Console.WriteLine($"file list used: {listUsed}");
+
+                Console.WriteLine("files:");
+
+                if (listSize > 0 && listSize < 10000 && listUsed > 0 && listUsed <= listSize)
+                {
+                    ulong listStart = (ulong)(bootBase + 1 + bootSize);
+                    uint listSectors = listSize;
+
+                    ulong totalSectors = diskIo.GetTotalSectors();
+                    if (listStart + listSectors <= totalSectors)
+                    {
+                        try
+                        {
+                            byte[] fileList = diskIo.ReadSectors(listStart, listSectors);
+                            if (fileList != null && fileList.Length > 0)
+                            {
+                                int offset = 0;
+                                bool hasFiles = false;
+
+                                while (offset < fileList.Length)
+                                {
+                                    if (offset + 1 >= fileList.Length)
+                                        break;
+
+                                    byte size = fileList[offset];
+                                    if (size == 0)
+                                        break;
+
+                                    if (offset + 14 >= fileList.Length)
+                                        break;
+
+                                    uint dataStart = BitConverter.ToUInt32(fileList, offset + 2);
+                                    uint dataSize = BitConverter.ToUInt32(fileList, offset + 6);
+                                    uint dataTime = BitConverter.ToUInt32(fileList, offset + 10);
+
+                                    int nameLen = size - 12;
+                                    if (nameLen <= 0 || offset + 14 + nameLen > fileList.Length)
+                                        break;
+
+                                    string name = System.Text.Encoding.ASCII.GetString(fileList, offset + 14, nameLen).TrimEnd('\0');
+
+                                    string type = (dataStart >= priSize) ? "1*" : "0";
+                                    hasFiles = true;
+
+                                    DateTime time = DateTimeOffset.FromUnixTimeSeconds(dataTime).LocalDateTime;
+                                    string timeStr = time.ToString("yyyy-MM-dd HH:mm:ss");
+
+                                    Console.WriteLine($"  {type}  \"{name}\" 0x{dataStart:x} {dataSize} ({timeStr})");
+                                    offset += size + 2;
+                                }
+
+                                if (!hasFiles)
+                                    Console.WriteLine("  (no files)");
+                            }
+                            else
+                            {
+                                Console.WriteLine("  (empty file list)");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"  (failed to read file list: {ex.Message})");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  (invalid file list: extends beyond disk size)");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"  (invalid file list size: {listSize}, used: {listUsed})");
+                }
+
+                Console.WriteLine($"primary area free space: 0");
+                Console.WriteLine($"extended area free space: 0");
+
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"fbinst: error: {ex.Message}");
+                return 1;
+            }
+        }
 
         static int HandleFormat(string[] args)
         {
@@ -194,263 +426,6 @@ namespace FBINSTSharp
                     Console.Error.WriteLine(ex.StackTrace);
                 return 1;
             }
-        }
-
-        static int HandleRestore(string[] args)
-        {
-            Console.WriteLine("Restore command - to be implemented");
-            return 0;
-        }
-
-        static int HandleUpdate(string[] args)
-        {
-            Console.WriteLine("Update command - to be implemented");
-            return 0;
-        }
-
-        static int HandleSync(string[] args)
-        {
-            Console.WriteLine("Sync command - to be implemented");
-            return 0;
-        }
-
-        static int HandleInfo(string[] args)
-        {
-            try
-            {
-                // Парсим путь к устройству
-                if (args.Length == 0 || string.IsNullOrEmpty(args[0]))
-                {
-                    Console.Error.WriteLine("fbinst: error: device not specified");
-                    return 1;
-                }
-
-                string devicePath = args[0];
-                using var diskIo = new DiskIoService();
-
-                try
-                {
-                    if (!diskIo.Open(devicePath))
-                    {
-                        Console.Error.WriteLine($"fbinst: error: failed to open device {devicePath}");
-                        return 1;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine($"fbinst: error: {ex.Message}");
-                    return 1;
-                }
-
-                // Получаем информацию
-                ulong totalSectors = diskIo.GetTotalSectors();
-                ulong totalBytes = totalSectors * 512;
-
-                // Форматируем размер
-                string sizeStr;
-                if (totalBytes >= 1024UL * 1024 * 1024 * 1024) // TB
-                    sizeStr = $"{totalBytes / (1024UL * 1024 * 1024 * 1024)} TB";
-                else if (totalBytes >= 1024UL * 1024 * 1024) // GB
-                    sizeStr = $"{totalBytes / (1024UL * 1024 * 1024)} GB";
-                else if (totalBytes >= 1024UL * 1024) // MB
-                    sizeStr = $"{totalBytes / (1024UL * 1024)} MB";
-                else
-                    sizeStr = $"{totalBytes / 1024} KB";
-
-                var geometry = diskIo.GetGeometry();
-
-                Console.WriteLine($"Device: {devicePath}");
-                Console.WriteLine($"Total sectors: {totalSectors}");
-                Console.WriteLine($"Total size: {sizeStr}");
-                Console.WriteLine($"Bytes per sector: {geometry.BytesPerSector}");
-                Console.WriteLine($"Sectors per track: {geometry.SectorsPerTrack}");
-                Console.WriteLine($"Tracks per cylinder: {geometry.TracksPerCylinder}");
-                Console.WriteLine($"Removable: {diskIo.IsRemovable}");
-
-                // Читаем MBR (сектор 0)
-                try
-                {
-                    byte[] mbr = diskIo.ReadSectors(0, 1);
-
-                    // Проверяем сигнатуру MBR
-                    ushort signature = BitConverter.ToUInt16(mbr, 510);
-                    Console.WriteLine($"MBR signature: 0x{signature:X4} {(signature == 0xAA55 ? "(valid)" : "(invalid)")}");
-
-                    // Проверяем наличие fbinst-метки
-                    uint fbMagic = BitConverter.ToUInt32(mbr, 0x1B4);
-                    Console.WriteLine($"fbinst magic: 0x{fbMagic:X8} {(fbMagic == 0x46424246 ? "(fbinst detected)" : "")}");
-
-                    // Если fbinst найден, читаем дополнительные данные
-                    if (fbMagic == 0x46424246)
-                    {
-                        // Читаем основную структуру fbinst (сектор, следующий за MBR)
-                        byte[] fbData = diskIo.ReadSectors(1, 1);
-                        ushort bootSize = BitConverter.ToUInt16(fbData, 0);
-                        ushort flags = BitConverter.ToUInt16(fbData, 2);
-                        byte verMajor = fbData[4];
-                        byte verMinor = fbData[5];
-                        ushort listUsed = BitConverter.ToUInt16(fbData, 6);
-                        ushort listSize = BitConverter.ToUInt16(fbData, 8);
-                        ushort priSize = BitConverter.ToUInt16(fbData, 10);
-                        uint extSize = BitConverter.ToUInt32(fbData, 12);
-
-                        Console.WriteLine($"  fbinst version: {verMajor}.{verMinor}");
-                        Console.WriteLine($"  Boot size: {bootSize} sectors");
-                        Console.WriteLine($"  Flags: 0x{flags:X4}");
-                        Console.WriteLine($"  List used: {listUsed} sectors");
-                        Console.WriteLine($"  List size: {listSize} sectors");
-                        Console.WriteLine($"  Primary data size: {priSize} sectors");
-                        Console.WriteLine($"  Extended data size: {extSize} sectors");
-                    }
-
-                    // Выводим информацию о разделах
-                    Console.WriteLine("\nPartition table:");
-                    bool hasPartitions = false;
-                    for (int i = 0; i < 4; i++)
-                    {
-                        int offset = 0x1BE + i * 16;
-                        byte status = mbr[offset];
-                        if (status == 0x00 && mbr[offset + 4] == 0x00)
-                            continue;
-
-                        hasPartitions = true;
-                        uint startLba = BitConverter.ToUInt32(mbr, offset + 8);
-                        uint sizeInSectors = BitConverter.ToUInt32(mbr, offset + 12);
-                        byte type = mbr[offset + 4];
-                        string typeName = GetPartitionTypeName(type);
-
-                        Console.WriteLine($"  Partition {i + 1}:");
-                        Console.WriteLine($"    Bootable: {(status == 0x80 ? "Yes" : "No")}");
-                        Console.WriteLine($"    Type: 0x{type:X2} ({typeName})");
-                        Console.WriteLine($"    Start: {startLba} sectors");
-                        Console.WriteLine($"    Size: {sizeInSectors} sectors");
-                    }
-
-                    if (!hasPartitions)
-                        Console.WriteLine("  No partitions found (the whole disk may be used as a superfloppy)");
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Failed to read MBR: {ex.Message}");
-                }
-
-                return 0;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"fbinst: error: {ex.Message}");
-                return 1;
-            }
-        }
-
-        private static string GetPartitionTypeName(byte type)
-        {
-            // Наиболее распространённые типы разделов
-            return type switch
-            {
-                0x01 => "FAT12",
-                0x04 => "FAT16 (DOS 3.0+)",
-                0x06 => "FAT16 (DOS 3.31+)",
-                0x07 => "NTFS/exFAT",
-                0x0B => "FAT32 (CHS)",
-                0x0C => "FAT32 (LBA)",
-                0x0E => "FAT16 (LBA)",
-                0x0F => "Extended (LBA)",
-                0x11 => "Hidden FAT12",
-                0x12 => "Compaq diagnostics",
-                0x14 => "Hidden FAT16",
-                0x16 => "Hidden FAT16",
-                0x17 => "Hidden NTFS",
-                0x1B => "Hidden FAT32 (CHS)",
-                0x1C => "Hidden FAT32 (LBA)",
-                0x1E => "Hidden FAT16 (LBA)",
-                0x27 => "System Recovery",
-                0x42 => "Windows Dynamic Disk",
-                0x82 => "Linux swap",
-                0x83 => "Linux",
-                0x85 => "Linux extended",
-                0x86 => "NTFS volume set",
-                0x87 => "NTFS volume set",
-                0x8E => "Linux LVM",
-                0x9F => "BIOS Boot",
-                0xEE => "GPT Protective MBR",
-                0xEF => "EFI System Partition",
-                0xFB => "VMware VMFS",
-                0xFC => "VMware VMKCORE",
-                _ => "Unknown",
-            };
-        }
-
-        static int HandleClear(string[] args)
-        {
-            Console.WriteLine("Clear command - to be implemented");
-            return 0;
-        }
-
-        static int HandleAdd(string[] args)
-        {
-            Console.WriteLine("Add command - to be implemented");
-            return 0;
-        }
-
-        static int HandleAddMenu(string[] args)
-        {
-            Console.WriteLine("Add-menu command - to be implemented");
-            return 0;
-        }
-
-        static int HandleResize(string[] args)
-        {
-            Console.WriteLine("Resize command - to be implemented");
-            return 0;
-        }
-
-        static int HandleCopy(string[] args)
-        {
-            Console.WriteLine("Copy command - to be implemented");
-            return 0;
-        }
-
-        static int HandleMove(string[] args)
-        {
-            Console.WriteLine("Move command - to be implemented");
-            return 0;
-        }
-
-        static int HandleExport(string[] args)
-        {
-            Console.WriteLine("Export command - to be implemented");
-            return 0;
-        }
-
-        static int HandleRemove(string[] args)
-        {
-            Console.WriteLine("Remove command - to be implemented");
-            return 0;
-        }
-
-        static int HandleCat(string[] args)
-        {
-            Console.WriteLine("Cat command - to be implemented");
-            return 0;
-        }
-
-        static int HandleCatMenu(string[] args)
-        {
-            Console.WriteLine("Cat-menu command - to be implemented");
-            return 0;
-        }
-
-        static int HandlePack(string[] args)
-        {
-            Console.WriteLine("Pack command - to be implemented");
-            return 0;
-        }
-
-        static int HandleCheck(string[] args)
-        {
-            Console.WriteLine("Check command - to be implemented");
-            return 0;
         }
 
         static int HandleSave(string[] args)
@@ -562,7 +537,6 @@ Commands:
 
             bool foundAny = false;
 
-            // Перебираем диски от 0 до 19 (как в оригинальном fbinst)
             for (int diskNumber = 0; diskNumber < 20; diskNumber++)
             {
                 string devicePath = $@"\\.\PHYSICALDRIVE{diskNumber}";
@@ -571,20 +545,13 @@ Commands:
                 try
                 {
                     using var diskIo = new DiskIoService();
-
-                    // Открываем только для чтения, чтобы не требовать прав на запись
                     if (!diskIo.Open(devicePath, readOnly: true))
                         continue;
 
                     foundAny = true;
-
-                    // Получаем информацию
                     var info = diskIo.GetDiskInfo();
-
-                    // Форматируем размер в человекочитаемый вид
                     string sizeStr = FormatSize(info.TotalBytes);
 
-                    // Проверяем наличие fbinst в MBR
                     string marker = "";
                     try
                     {
@@ -595,16 +562,12 @@ Commands:
                             marker = " [fbinst]";
                         }
                     }
-                    catch
-                    {
-                        // Если не удалось прочитать MBR (нет прав или диск защищён), просто игнорируем
-                    }
+                    catch { }
 
                     Console.WriteLine($"{displayName}: {info.TotalSectors} sectors ({sizeStr}){(info.IsRemovable ? " [removable]" : "")}{marker}");
                 }
                 catch
                 {
-                    // Устройство не существует или недоступно — просто пропускаем
                     continue;
                 }
             }
@@ -620,18 +583,15 @@ Commands:
             }
         }
 
-        /// <summary>
-        /// Форматирует размер в байтах в человекочитаемый вид.
-        /// </summary>
         private static string FormatSize(ulong bytes)
         {
-            if (bytes >= 1024UL * 1024 * 1024 * 1024) // TB
+            if (bytes >= 1024UL * 1024 * 1024 * 1024)
                 return $"{bytes / (1024UL * 1024 * 1024 * 1024)} TB";
-            if (bytes >= 1024UL * 1024 * 1024) // GB
+            if (bytes >= 1024UL * 1024 * 1024)
                 return $"{bytes / (1024UL * 1024 * 1024)} GB";
-            if (bytes >= 1024UL * 1024) // MB
+            if (bytes >= 1024UL * 1024)
                 return $"{bytes / (1024UL * 1024)} MB";
-            if (bytes >= 1024UL) // KB
+            if (bytes >= 1024UL)
                 return $"{bytes / 1024} KB";
             return $"{bytes} B";
         }
