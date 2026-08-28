@@ -432,25 +432,23 @@ namespace FBINSTSharp.Core.Services
 
         private bool IsMatchingDevice(string devicePath, uint deviceType, uint deviceNumber)
         {
-            using (SafeFileHandle tempHandle = CreateFile(
+            using SafeFileHandle tempHandle = CreateFile(
                 devicePath,
                 0,
                 FILE_SHARE_READ | FILE_SHARE_WRITE,
                 IntPtr.Zero,
                 OPEN_EXISTING,
                 0,
-                IntPtr.Zero))
-            {
-                if (tempHandle == null || tempHandle.IsInvalid)
-                    return false;
+                IntPtr.Zero);
+            if (tempHandle == null || tempHandle.IsInvalid)
+                return false;
 
-                var number = GetDeviceNumber(tempHandle);
-                if (number == null)
-                    return false;
+            var number = GetDeviceNumber(tempHandle);
+            if (number == null)
+                return false;
 
-                return number.Value.DeviceType == deviceType &&
-                       number.Value.DeviceNumber == deviceNumber;
-            }
+            return number.Value.DeviceType == deviceType &&
+                   number.Value.DeviceNumber == deviceNumber;
         }
 
         private bool IsDeviceRemovable(string devicePath)

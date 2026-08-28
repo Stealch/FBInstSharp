@@ -22,8 +22,8 @@ namespace FBINSTSharp.Core.Services
             if (totalSectors > 0xFFFFFFFFUL)
                 throw new ArgumentException($"Partition too large for FAT32: {totalSectors} sectors (max 2^32-1)");
 
-            var geometry = _diskIo.GetGeometry();
-            uint bytesPerSector = geometry.BytesPerSector;
+            var (SectorsPerTrack, TracksPerCylinder, BytesPerSector) = _diskIo.GetGeometry();
+            uint bytesPerSector = BytesPerSector;
 
             var (sectorsPerCluster, reservedSectors, fatSize, totalClusters) =
                 CalculateFatParameters(totalSectors, bytesPerSector, unitSize, align);
