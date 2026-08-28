@@ -49,6 +49,9 @@
     <Compile Include="Core\Parsers\FormatCommandParser.cs" />
     <Compile Include="Core\Services\DiskIoService.cs" />
     <Compile Include="Core\Services\Fat32FormatterService.cs" />
+    <Compile Include="Core\Services\FbFileManagerService.cs" />
+    <Compile Include="Core\Services\FbFormatterService.cs" />
+    <Compile Include="Core\Services\FbSyncService.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

@@ -205,31 +205,47 @@ namespace FBINSTSharp.Core.Services
         private async Task WriteFat32StructureAsync(ulong startSector, byte[] bootSector, byte[] fsInfo,
             byte[] firstFatSector, uint bytesPerSector, uint reservedSectors, uint fatSize, uint sectorsPerCluster)
         {
+            // 1. Обнуляем ВСЮ системную область: резервные сектора + FATы + корневой кластер
+            // Это соответствует zero_sectors() в оригинальном fat32format.c
+            ulong systemAreaSize = reservedSectors + 2 * fatSize + sectorsPerCluster;
             byte[] zeroSector = new byte[bytesPerSector];
 
+            // Обнуляем большими блоками для производительности (по 128 секторов, как в оригинале)
+            const uint burstSize = 128;
+            for (ulong i = 0; i < systemAreaSize; i += burstSize)
+            {
+                ulong count = Math.Min(burstSize, systemAreaSize - i);
+                for (ulong j = 0; j < count; j++)
+                {
+                    await _diskIo.WriteSectorsAsync(startSector + i + j, zeroSector);
+                }
+            }
+
+            // 2. Записываем структуры (как в оригинале)
+            // Sector 0: Boot Sector
             await _diskIo.WriteSectorsAsync(startSector, bootSector);
+
+            // Sector 1: FSInfo
             await _diskIo.WriteSectorsAsync(startSector + 1, fsInfo);
 
-            for (int i = 2; i < 6; i++)
-                await _diskIo.WriteSectorsAsync(startSector + (ulong)i, zeroSector);
-
+            // Sectors 2-5: нули (уже обнулены)
+            // Sector 6: Backup Boot Sector
             await _diskIo.WriteSectorsAsync(startSector + 6, bootSector);
+
+            // Sector 7: Backup FSInfo
             await _diskIo.WriteSectorsAsync(startSector + 7, fsInfo);
 
-            for (ulong i = 8; i < reservedSectors; i++)
-                await _diskIo.WriteSectorsAsync(startSector + i, zeroSector);
+            // Sectors 8 до reservedSectors-1: нули (уже обнулены)
 
+            // 3. Записываем первые сектора FAT (остальные уже нули)
             for (uint fatIndex = 0; fatIndex < 2; fatIndex++)
             {
                 ulong fatStart = startSector + reservedSectors + (ulong)fatIndex * fatSize;
                 await _diskIo.WriteSectorsAsync(fatStart, firstFatSector);
-                for (ulong i = 1; i < fatSize; i++)
-                    await _diskIo.WriteSectorsAsync(fatStart + i, zeroSector);
+                // Остальные сектора FAT уже нули
             }
 
-            ulong rootClusterStart = startSector + reservedSectors + 2 * fatSize;
-            for (uint i = 0; i < sectorsPerCluster; i++)
-                await _diskIo.WriteSectorsAsync(rootClusterStart + i, zeroSector);
+            // 4. Корневой кластер (cluster 2) уже нули
         }
 
         private uint GetVolumeId()

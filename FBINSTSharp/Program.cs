@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using FBINSTSharp.Core.Parsers;
 using FBINSTSharp.Core.Services;
 using FBINSTSharp.Core.Interfaces;
@@ -386,30 +387,11 @@ namespace FBINSTSharp
                     }
                 }
 
-                if (options.IsFat32)
-                {
-                    var formatter = new Fat32FormatterService(diskIo);
-                    ulong startSector = 0;
-                    ulong totalSectors = diskIo.GetTotalSectors();
+                // Используем FbFormatterService для полного форматирования
+                var formatter = new FbFormatterService(diskIo);
+                formatter.FormatAsync(options).Wait();
 
-                    Console.WriteLine($"Total sectors: {totalSectors}");
-                    Console.WriteLine($"Cluster size: {(options.UnitSize > 0 ? (object)options.UnitSize : (object)"auto")}");
-                    Console.WriteLine($"Align: {options.Align}");
-
-                    formatter.FormatAsync(startSector, totalSectors, options.UnitSize, options.Align).Wait();
-                    Console.WriteLine("FAT32 formatting completed successfully.");
-                }
-                else if (options.IsFat16)
-                {
-                    Console.WriteLine("FAT16 support not yet implemented.");
-                    return 1;
-                }
-                else
-                {
-                    Console.Error.WriteLine("fbinst: error: no file system specified (use --fat32 or --fat16)");
-                    return 1;
-                }
-
+                Console.WriteLine("Format completed successfully.");
                 return 0;
             }
             catch (AggregateException ex) when (ex.InnerException != null)
@@ -544,16 +526,15 @@ Commands:
                         continue;
 
                     ulong totalSectors = diskIo.GetTotalSectors();
-
-                    // Точная формула из оригинального fbinst.c
                     ulong sizeInGB;
-                    if (totalSectors >= (3UL << 20)) // 3 * 1024 * 1024 = 3,145,728 секторов (~1.5 ГБ)
+
+                    if (totalSectors >= (3UL << 20))
                     {
-                        sizeInGB = (totalSectors + (1UL << 20)) >> 21; // (size + 1,048,576) / 2,097,152
+                        sizeInGB = (totalSectors + (1UL << 20)) >> 21;
                     }
                     else
                     {
-                        sizeInGB = (totalSectors + (1UL << 10)) >> 11; // (size + 1024) / 2048 (в МБ)
+                        sizeInGB = (totalSectors + (1UL << 10)) >> 11;
                     }
 
                     string marker = "";
@@ -573,19 +554,6 @@ Commands:
                     continue;
                 }
             }
-        }
-
-        private static string FormatSize(ulong bytes)
-        {
-            if (bytes >= 1024UL * 1024 * 1024 * 1024)
-                return $"{bytes / (1024UL * 1024 * 1024 * 1024)} TB";
-            if (bytes >= 1024UL * 1024 * 1024)
-                return $"{bytes / (1024UL * 1024 * 1024)} GB";
-            if (bytes >= 1024UL * 1024)
-                return $"{bytes / (1024UL * 1024)} MB";
-            if (bytes >= 1024UL)
-                return $"{bytes / 1024} KB";
-            return $"{bytes} B";
         }
 
         #endregion
