@@ -118,6 +118,12 @@ namespace FBINSTSharp
                         return HandleInfo(new[] { _devicePath });
 
                     case "restore":
+                        if (_devicePath == null)
+                        {
+                            Console.Error.WriteLine("fbinst: error: device not specified for restore");
+                            return 1;
+                        }
+                        return HandleRestore(new[] { _devicePath });
                     case "update":
                     case "sync":
                     case "clear":
@@ -128,6 +134,14 @@ namespace FBINSTSharp
                     case "move":
                     case "export":
                     case "remove":
+                        if (_devicePath == null)
+                        {
+                            Console.Error.WriteLine("fbinst: error: device not specified for remove");
+                            return 1;
+                        }
+                        var removeArgs = new List<string> { _devicePath };
+                        removeArgs.AddRange(commandArgs);
+                        return HandleRemove(removeArgs.ToArray());
                     case "cat":
                     case "cat-menu":
                     case "pack":
@@ -217,11 +231,8 @@ namespace FBINSTSharp
                     return 1;
                 }
 
-                // Получаем boot_base из MBR (смещение 0x1B2)
-                ushort bootBase = BitConverter.ToUInt16(mbr, 0x1B2);
-                Console.WriteLine($"base boot sector: {bootBase}");
-
                 // Читаем структуру fb_data из сектора boot_base + 1
+                ushort bootBase = BitConverter.ToUInt16(mbr, 0x1B2);
                 ulong fbDataSector = (ulong)(bootBase + 1);
                 byte[] fbData = diskIo.ReadSectors(fbDataSector, 1);
                 if (fbData == null || fbData.Length < 16)
@@ -230,9 +241,12 @@ namespace FBINSTSharp
                     return 1;
                 }
 
+                // --- ВЫВОД В ПОРЯДКЕ, КАК В ОРИГИНАЛЕ ---
                 byte verMajor = fbData[4];
                 byte verMinor = fbData[5];
                 Console.WriteLine($"version: {verMajor}.{verMinor}");
+
+                Console.WriteLine($"base boot sector: {bootBase}");
 
                 ushort bootSize = BitConverter.ToUInt16(fbData, 0);
                 Console.WriteLine($"boot code size: {bootSize}");
@@ -265,9 +279,14 @@ namespace FBINSTSharp
 
                 Console.WriteLine("files:");
 
+                // --- ПАРСИМ СПИСОК ФАЙЛОВ И СВОБОДНОЕ МЕСТО ---
+                List<FbFileEntry> files = new List<FbFileEntry>();
+                uint currentPos = 0;
+
                 if (listSize > 0 && listSize < 10000 && listUsed > 0 && listUsed <= listSize)
                 {
-                    ulong listStart = (ulong)(bootBase + 1 + bootSize);
+                    uint listStartSector = (uint)(bootBase + 1 + bootSize);
+                    ulong listStart = (ulong)listStartSector;
                     uint listSectors = listSize;
 
                     ulong totalSectors = diskIo.GetTotalSectors();
@@ -279,13 +298,8 @@ namespace FBINSTSharp
                             if (fileList != null && fileList.Length > 0)
                             {
                                 int offset = 0;
-                                bool hasFiles = false;
-
                                 while (offset < fileList.Length)
                                 {
-                                    if (offset + 1 >= fileList.Length)
-                                        break;
-
                                     byte size = fileList[offset];
                                     if (size == 0)
                                         break;
@@ -303,18 +317,64 @@ namespace FBINSTSharp
 
                                     string name = System.Text.Encoding.ASCII.GetString(fileList, offset + 14, nameLen).TrimEnd('\0');
 
-                                    string type = (dataStart >= priSize) ? "1*" : "0";
-                                    hasFiles = true;
+                                    files.Add(new FbFileEntry
+                                    {
+                                        Name = name,
+                                        DataStart = dataStart,
+                                        DataSize = dataSize,
+                                        DataTime = dataTime,
+                                        IsExtended = dataStart >= priSize
+                                    });
 
-                                    DateTime time = DateTimeOffset.FromUnixTimeSeconds(dataTime).LocalDateTime;
-                                    string timeStr = time.ToString("yyyy-MM-dd HH:mm:ss");
-
-                                    Console.WriteLine($"  {type}  \"{name}\" 0x{dataStart:x} {dataSize} ({timeStr})");
                                     offset += size + 2;
                                 }
 
-                                if (!hasFiles)
-                                    Console.WriteLine("  (no files)");
+                                // --- ВТОРОЙ ПРОХОД: выводим файлы и свободное место ---
+                                currentPos = listStartSector + listSize;
+                                uint totalPrimaryFree = 0;
+                                uint totalExtendedFree = 0;
+
+                                foreach (var file in files)
+                                {
+                                    if (file.DataStart > currentPos)
+                                    {
+                                        uint freeSize = file.DataStart - currentPos;
+                                        if (currentPos < priSize)
+                                        {
+                                            Console.WriteLine($"  0*   0x{currentPos:x} 0x{freeSize:x}");
+                                            totalPrimaryFree += freeSize;
+                                        }
+                                        else
+                                        {
+                                            Console.WriteLine($"  1*   0x{currentPos:x} 0x{freeSize:x}");
+                                            totalExtendedFree += freeSize;
+                                        }
+                                    }
+
+                                    string type = file.IsExtended ? "1*" : "0";
+                                    DateTime time = DateTimeOffset.FromUnixTimeSeconds(file.DataTime).LocalDateTime;
+                                    string timeStr = time.ToString("yyyy-MM-dd HH:mm:ss");
+                                    Console.WriteLine($"  {type}  \"{file.Name}\" 0x{file.DataStart:x} {file.DataSize} ({timeStr})");
+
+                                    uint sectorSize = file.IsExtended ? 512u : 510u;
+                                    currentPos = file.DataStart + (uint)((file.DataSize + sectorSize - 1) / sectorSize);
+                                }
+
+                                if (currentPos < priSize)
+                                {
+                                    uint freeSize = priSize - currentPos;
+                                    Console.WriteLine($"  0*   0x{currentPos:x} 0x{freeSize:x}");
+                                    totalPrimaryFree += freeSize;
+                                }
+                                else if (currentPos < priSize + extSize)
+                                {
+                                    uint freeSize = (uint)(priSize + extSize - currentPos);
+                                    Console.WriteLine($"  1*   0x{currentPos:x} 0x{freeSize:x}");
+                                    totalExtendedFree += freeSize;
+                                }
+
+                                Console.WriteLine($"primary area free space: {totalPrimaryFree * 510}");
+                                Console.WriteLine($"extended area free space: {totalExtendedFree * 512}");
                             }
                             else
                             {
@@ -336,9 +396,6 @@ namespace FBINSTSharp
                     Console.WriteLine($"  (invalid file list size: {listSize}, used: {listUsed})");
                 }
 
-                Console.WriteLine($"primary area free space: 0");
-                Console.WriteLine($"extended area free space: 0");
-
                 return 0;
             }
             catch (Exception ex)
@@ -346,6 +403,15 @@ namespace FBINSTSharp
                 Console.Error.WriteLine($"fbinst: error: {ex.Message}");
                 return 1;
             }
+        }
+
+        private class FbFileEntry
+        {
+            public string Name { get; set; }
+            public uint DataStart { get; set; }
+            public uint DataSize { get; set; }
+            public uint DataTime { get; set; }
+            public bool IsExtended { get; set; }
         }
 
         static int HandleFormat(string[] args)
@@ -406,6 +472,87 @@ namespace FBINSTSharp
                 Console.Error.WriteLine($"fbinst: error: {ex.Message}");
                 if (_verbosity > 0)
                     Console.Error.WriteLine(ex.StackTrace);
+                return 1;
+            }
+        }
+
+        static int HandleRestore(string[] args)
+        {
+            try
+            {
+                if (args.Length == 0 || string.IsNullOrEmpty(args[0]))
+                {
+                    Console.Error.WriteLine("fbinst: error: device not specified");
+                    return 1;
+                }
+
+                string devicePath = args[0];
+                using var diskIo = new DiskIoService();
+                if (!diskIo.Open(devicePath))
+                {
+                    Console.Error.WriteLine($"fbinst: error: failed to open device {devicePath}");
+                    return 1;
+                }
+
+                var restoreService = new FbRestoreService(diskIo);
+                restoreService.RestoreAsync().Wait();
+
+                Console.WriteLine("MBR restored successfully.");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"fbinst: error: {ex.Message}");
+                return 1;
+            }
+        }
+
+        static int HandleRemove(string[] args)
+        {
+            try
+            {
+                if (args.Length < 1 || string.IsNullOrEmpty(args[0]))
+                {
+                    Console.Error.WriteLine("fbinst: error: file name not specified");
+                    return 1;
+                }
+
+                string devicePath = args[0];
+                string fileName = args.Length > 1 ? args[1] : null;
+
+                if (string.IsNullOrEmpty(fileName))
+                {
+                    Console.Error.WriteLine("fbinst: error: file name not specified");
+                    return 1;
+                }
+
+                using var diskIo = new DiskIoService();
+                if (!diskIo.Open(devicePath))
+                {
+                    Console.Error.WriteLine($"fbinst: error: failed to open device {devicePath}");
+                    return 1;
+                }
+
+                var fileManager = new FbFileManagerService(diskIo);
+                fileManager.LoadFileListAsync().Wait();
+
+                // Проверяем, существует ли файл
+                if (!fileManager.FileExists(fileName))
+                {
+                    Console.Error.WriteLine($"fbinst: error: file '{fileName}' not found");
+                    return 1;
+                }
+
+                // Удаляем файл
+                fileManager.RemoveFile(fileName);
+                fileManager.SaveFileListAsync().Wait();
+
+                Console.WriteLine($"File '{fileName}' removed successfully.");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"fbinst: error: {ex.Message}");
                 return 1;
             }
         }

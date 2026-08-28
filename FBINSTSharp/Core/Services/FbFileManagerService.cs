@@ -126,6 +126,39 @@ namespace FBINSTSharp.Core.Services
             await SaveFileListAsync();
         }
 
+        public async Task AddFileFromDataAsync(string name, byte[] fileData, bool extended = false)
+        {
+            if (string.IsNullOrEmpty(name))
+                throw new ArgumentException("File name cannot be empty", nameof(name));
+
+            if (fileData == null || fileData.Length == 0)
+                throw new ArgumentException("File data cannot be empty", nameof(fileData));
+
+            uint fileSize = (uint)fileData.Length;
+
+            // Находим свободное место
+            uint startSector = FindFreeSpace(fileSize, extended);
+
+            // Создаём запись в списке
+            var entry = new FbFileEntry
+            {
+                Name = name,
+                DataStart = startSector,
+                DataSize = fileSize,
+                DataTime = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                IsExtended = extended
+            };
+
+            // Сохраняем файл на диск
+            await WriteFileDataAsync(startSector, fileData, extended);
+
+            // Добавляем в список
+            _files[name] = entry;
+
+            // Сохраняем список файлов
+            await SaveFileListAsync();
+        }
+
         private uint FindFreeSpace(uint fileSize, bool extended)
         {
             uint sectorSize = extended ? 512u : 510u;
@@ -174,7 +207,7 @@ namespace FBINSTSharp.Core.Services
             }
         }
 
-        private async Task SaveFileListAsync()
+        public async Task SaveFileListAsync()
         {
             // Формируем список файлов в буфере
             byte[] fileList = new byte[_listSize];
@@ -213,6 +246,22 @@ namespace FBINSTSharp.Core.Services
             uint listSectors = (uint)(_listSize / 510);
 
             await _diskIo.WriteSectorsAsync(listStart, fileList);
+        }
+
+        public void RemoveFile(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                throw new ArgumentException("File name cannot be empty", nameof(name));
+
+            if (!_files.ContainsKey(name))
+                throw new InvalidOperationException($"File '{name}' not found");
+
+            _files.Remove(name);
+        }
+
+        public bool FileExists(string name)
+        {
+            return _files.ContainsKey(name);
         }
 
         public class FbFileEntry
