@@ -33,8 +33,8 @@ namespace FBINSTSharp.Core.Services
                 throw new ArgumentNullException(nameof(options));
 
             // 1. Получаем геометрию диска
-            var geometry = _diskIo.GetGeometry();
-            uint bytesPerSector = geometry.BytesPerSector;
+            var (SectorsPerTrack, TracksPerCylinder, BytesPerSector) = _diskIo.GetGeometry();
+            uint bytesPerSector = BytesPerSector;
             ulong totalSectors = _diskIo.GetTotalSectors();
 
             // 2. Проверяем, что диск достаточно большой
@@ -69,10 +69,12 @@ namespace FBINSTSharp.Core.Services
 
         private FbFormatParameters CalculateFbParameters(FormatOptions options, ulong totalSectors, uint bytesPerSector)
         {
-            var result = new FbFormatParameters();
+            var result = new FbFormatParameters
+            {
 
-            // Определяем базовые параметры (из оригинального fbinst.c)
-            result.BaseSector = options.BaseSector > 0 ? options.BaseSector : DEF_BASE_SIZE;
+                // Определяем базовые параметры (из оригинального fbinst.c)
+                BaseSector = options.BaseSector > 0 ? options.BaseSector : DEF_BASE_SIZE
+            };
 
             // Размер primary области (мин 63*256, макс 65535)
             if (options.PrimarySize > 0)

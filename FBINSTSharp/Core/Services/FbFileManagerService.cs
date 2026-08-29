@@ -103,6 +103,39 @@ namespace FBINSTSharp.Core.Services
             await AddFileFromDataAsync(name, fileData, extended);
         }
 
+        public FbFileEntry GetFileEntry(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                throw new ArgumentException("File name cannot be empty", nameof(name));
+
+            if (!_files.TryGetValue(name, out var entry))
+                throw new InvalidOperationException($"File '{name}' not found");
+
+            return entry;
+        }
+
+        public byte[] ReadFileData(FbFileEntry entry)
+        {
+            if (entry == null)
+                throw new ArgumentNullException(nameof(entry));
+
+            uint sectorSize = entry.IsExtended ? 512u : 510u;
+            uint sectorsNeeded = (uint)((entry.DataSize + sectorSize - 1) / sectorSize);
+            byte[] result = new byte[entry.DataSize];
+
+            for (uint i = 0; i < sectorsNeeded; i++)
+            {
+                byte[] sectorData = _diskIo.ReadSectors(entry.DataStart + i, 1);
+
+                uint offset = i * sectorSize;
+                uint length = Math.Min(sectorSize, entry.DataSize - offset);
+
+                Array.Copy(sectorData, 0, result, offset, length);
+            }
+
+            return result;
+        }
+
         public async Task AddFileFromDataAsync(string name, byte[] fileData, bool extended = false)
         {
             if (string.IsNullOrEmpty(name))
@@ -126,6 +159,11 @@ namespace FBINSTSharp.Core.Services
             await WriteFileDataAsync(startSector, fileData, extended);
             _files[name] = entry;
             await SaveFileListAsync();
+        }
+
+        public List<FbFileEntry> GetAllFiles()
+        {
+            return new List<FbFileEntry>(_files.Values);
         }
 
         private uint FindFreeSpace(uint fileSize, bool extended)
