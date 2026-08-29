@@ -1,5 +1,5 @@
-﻿using System;
-using FBINSTSharp.Core.Models;
+﻿using FBINSTSharp.Core.Models;
+using System;
 
 namespace FBINSTSharp.Core.Parsers
 {

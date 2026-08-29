@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace FBINSTSharp.Core.Models
+﻿namespace FBINSTSharp.Core.Models
 {
     public class FormatOptions
     {

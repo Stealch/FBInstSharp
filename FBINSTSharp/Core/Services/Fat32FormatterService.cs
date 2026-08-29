@@ -1,7 +1,7 @@
-﻿using System;
+﻿using FBINSTSharp.Core.Interfaces;
+using System;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using FBINSTSharp.Core.Interfaces;
 
 namespace FBINSTSharp.Core.Services
 {

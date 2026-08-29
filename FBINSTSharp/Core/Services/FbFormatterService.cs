@@ -1,9 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Threading.Tasks;
-using FBINSTSharp.Core.Interfaces;
+﻿using FBINSTSharp.Core.Interfaces;
 using FBINSTSharp.Core.Models;
+using System;
+using System.Threading.Tasks;
 
 namespace FBINSTSharp.Core.Services
 {
