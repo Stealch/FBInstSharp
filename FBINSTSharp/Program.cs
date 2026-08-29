@@ -124,15 +124,41 @@ namespace FBINSTSharp
                             return 1;
                         }
                         return HandleRestore(new[] { _devicePath });
+
                     case "update":
+                        if (_devicePath == null)
+                        {
+                            Console.Error.WriteLine("fbinst: error: device not specified for update");
+                            return 1;
+                        }
+                        return HandleUpdate(new[] { _devicePath });
+
                     case "sync":
+                        if (_devicePath == null)
+                        {
+                            Console.Error.WriteLine("fbinst: error: device not specified for sync");
+                            return 1;
+                        }
+                        return HandleSync(new[] { _devicePath });
+
                     case "clear":
+                        if (_devicePath == null)
+                        {
+                            Console.Error.WriteLine("fbinst: error: device not specified for clear");
+                            return 1;
+                        }
+                        return HandleClear(new[] { _devicePath });
+
                     case "add":
-                    case "add-menu":
-                    case "resize":
-                    case "copy":
-                    case "move":
-                    case "export":
+                        if (_devicePath == null)
+                        {
+                            Console.Error.WriteLine("fbinst: error: device not specified for add");
+                            return 1;
+                        }
+                        var addArgs = new List<string> { _devicePath };
+                        addArgs.AddRange(commandArgs);
+                        return HandleAdd(addArgs.ToArray());
+
                     case "remove":
                         if (_devicePath == null)
                         {
@@ -142,6 +168,12 @@ namespace FBINSTSharp
                         var removeArgs = new List<string> { _devicePath };
                         removeArgs.AddRange(commandArgs);
                         return HandleRemove(removeArgs.ToArray());
+
+                    case "add-menu":
+                    case "resize":
+                    case "copy":
+                    case "move":
+                    case "export":
                     case "cat":
                     case "cat-menu":
                     case "pack":
@@ -472,6 +504,154 @@ namespace FBINSTSharp
                 Console.Error.WriteLine($"fbinst: error: {ex.Message}");
                 if (_verbosity > 0)
                     Console.Error.WriteLine(ex.StackTrace);
+                return 1;
+            }
+        }
+
+        static int HandleUpdate(string[] args)
+        {
+            try
+            {
+                if (args.Length == 0 || string.IsNullOrEmpty(args[0]))
+                {
+                    Console.Error.WriteLine("fbinst: error: device not specified");
+                    return 1;
+                }
+
+                string devicePath = args[0];
+                using var diskIo = new DiskIoService();
+                if (!diskIo.Open(devicePath))
+                {
+                    Console.Error.WriteLine($"fbinst: error: failed to open device {devicePath}");
+                    return 1;
+                }
+
+                var updateService = new FbUpdateService(diskIo);
+                updateService.UpdateAsync().Wait();
+
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"fbinst: error: {ex.Message}");
+                return 1;
+            }
+        }
+
+        static int HandleSync(string[] args)
+        {
+            try
+            {
+                if (args.Length == 0 || string.IsNullOrEmpty(args[0]))
+                {
+                    Console.Error.WriteLine("fbinst: error: device not specified");
+                    return 1;
+                }
+
+                string devicePath = args[0];
+                using var diskIo = new DiskIoService();
+                if (!diskIo.Open(devicePath))
+                {
+                    Console.Error.WriteLine($"fbinst: error: failed to open device {devicePath}");
+                    return 1;
+                }
+
+                var syncService = new FbSyncService(diskIo);
+                syncService.SyncAsync().Wait();
+
+                Console.WriteLine("Sync completed successfully.");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"fbinst: error: {ex.Message}");
+                return 1;
+            }
+        }
+
+        static int HandleClear(string[] args)
+        {
+            try
+            {
+                if (args.Length == 0 || string.IsNullOrEmpty(args[0]))
+                {
+                    Console.Error.WriteLine("fbinst: error: device not specified");
+                    return 1;
+                }
+
+                string devicePath = args[0];
+                using var diskIo = new DiskIoService();
+                if (!diskIo.Open(devicePath))
+                {
+                    Console.Error.WriteLine($"fbinst: error: failed to open device {devicePath}");
+                    return 1;
+                }
+
+                var fileManager = new FbFileManagerService(diskIo);
+                fileManager.LoadFileListAsync().Wait();
+                fileManager.ClearFiles();
+                fileManager.SaveFileListAsync().Wait();
+
+                Console.WriteLine("All files cleared successfully.");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"fbinst: error: {ex.Message}");
+                return 1;
+            }
+        }
+
+        static int HandleAdd(string[] args)
+        {
+            try
+            {
+                if (args.Length < 2 || string.IsNullOrEmpty(args[0]) || string.IsNullOrEmpty(args[1]))
+                {
+                    Console.Error.WriteLine("fbinst: error: not enough parameters for add");
+                    Console.Error.WriteLine("Usage: fbinst DEVICE add NAME [FILE]");
+                    return 1;
+                }
+
+                string devicePath = args[0];
+                string fileName = args[1];
+                string sourcePath = args.Length > 2 ? args[2] : null;
+
+                // Определяем, нужно ли сохранять в extended область
+                bool extended = false;
+                for (int i = 0; i < args.Length; i++)
+                {
+                    if (args[i] == "--extended" || args[i] == "-e")
+                    {
+                        extended = true;
+                        break;
+                    }
+                }
+
+                using var diskIo = new DiskIoService();
+                if (!diskIo.Open(devicePath))
+                {
+                    Console.Error.WriteLine($"fbinst: error: failed to open device {devicePath}");
+                    return 1;
+                }
+
+                var fileManager = new FbFileManagerService(diskIo);
+                fileManager.LoadFileListAsync().Wait();
+
+                if (string.IsNullOrEmpty(sourcePath))
+                {
+                    Console.Error.WriteLine("fbinst: error: source file not specified");
+                    return 1;
+                }
+
+                fileManager.AddFileAsync(fileName, sourcePath, extended).Wait();
+                Console.WriteLine($"File '{fileName}' added successfully.");
+
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"fbinst: error: {ex.Message}");
                 return 1;
             }
         }

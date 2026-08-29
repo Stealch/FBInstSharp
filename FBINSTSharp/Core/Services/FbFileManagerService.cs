@@ -99,31 +99,8 @@ namespace FBINSTSharp.Core.Services
             if (!File.Exists(sourcePath))
                 throw new FileNotFoundException($"File not found: {sourcePath}");
 
-            // Читаем файл
             byte[] fileData = File.ReadAllBytes(sourcePath);
-            uint fileSize = (uint)fileData.Length;
-
-            // Находим свободное место
-            uint startSector = FindFreeSpace(fileSize, extended);
-
-            // Создаём запись в списке
-            var entry = new FbFileEntry
-            {
-                Name = name,
-                DataStart = startSector,
-                DataSize = fileSize,
-                DataTime = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                IsExtended = extended
-            };
-
-            // Сохраняем файл на диск
-            await WriteFileDataAsync(startSector, fileData, extended);
-
-            // Добавляем в список
-            _files[name] = entry;
-
-            // Сохраняем список файлов
-            await SaveFileListAsync();
+            await AddFileFromDataAsync(name, fileData, extended);
         }
 
         public async Task AddFileFromDataAsync(string name, byte[] fileData, bool extended = false)
@@ -135,11 +112,8 @@ namespace FBINSTSharp.Core.Services
                 throw new ArgumentException("File data cannot be empty", nameof(fileData));
 
             uint fileSize = (uint)fileData.Length;
-
-            // Находим свободное место
             uint startSector = FindFreeSpace(fileSize, extended);
 
-            // Создаём запись в списке
             var entry = new FbFileEntry
             {
                 Name = name,
@@ -149,13 +123,8 @@ namespace FBINSTSharp.Core.Services
                 IsExtended = extended
             };
 
-            // Сохраняем файл на диск
             await WriteFileDataAsync(startSector, fileData, extended);
-
-            // Добавляем в список
             _files[name] = entry;
-
-            // Сохраняем список файлов
             await SaveFileListAsync();
         }
 
@@ -263,6 +232,13 @@ namespace FBINSTSharp.Core.Services
         {
             return _files.ContainsKey(name);
         }
+
+        public void ClearFiles()
+        {
+            _files.Clear();
+        }
+
+
 
         public class FbFileEntry
         {

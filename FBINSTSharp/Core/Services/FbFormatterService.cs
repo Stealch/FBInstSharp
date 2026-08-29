@@ -33,8 +33,8 @@ namespace FBINSTSharp.Core.Services
                 throw new ArgumentNullException(nameof(options));
 
             // 1. Получаем геометрию диска
-            var (SectorsPerTrack, TracksPerCylinder, BytesPerSector) = _diskIo.GetGeometry();
-            uint bytesPerSector = BytesPerSector;
+            var geometry = _diskIo.GetGeometry();
+            uint bytesPerSector = geometry.BytesPerSector;
             ulong totalSectors = _diskIo.GetTotalSectors();
 
             // 2. Проверяем, что диск достаточно большой
@@ -51,27 +51,28 @@ namespace FBINSTSharp.Core.Services
             // 5. Очищаем диск (записываем нули в начало)
             await ClearDiskAsync(fbParams.TotalSectors);
 
-            // 6. Создаём MBR с загрузочным кодом fbinst
+            // 6. Записываем загрузочный код из ресурса
+            await WriteBootCodeAsync(fbParams);
+
+            // 7. Создаём MBR с загрузочным кодом fbinst
             await CreateFbMbrAsync(fbParams);
 
-            // 7. Создаём структуру fb_data
+            // 8. Создаём структуру fb_data
             await CreateFbDataAsync(fbParams);
 
-            // 8. Создаём FAT32-раздел
+            // 9. Создаём FAT32-раздел
             await CreateFat32PartitionAsync(fbParams, options);
 
-            // 9. Синхронизируем изменения
+            // 10. Синхронизируем изменения
             _diskIo.DismountVolume();
         }
 
         private FbFormatParameters CalculateFbParameters(FormatOptions options, ulong totalSectors, uint bytesPerSector)
         {
-            var result = new FbFormatParameters
-            {
+            var result = new FbFormatParameters();
 
-                // Определяем базовые параметры (из оригинального fbinst.c)
-                BaseSector = options.BaseSector > 0 ? options.BaseSector : DEF_BASE_SIZE
-            };
+            // Определяем базовые параметры (из оригинального fbinst.c)
+            result.BaseSector = options.BaseSector > 0 ? options.BaseSector : DEF_BASE_SIZE;
 
             // Размер primary области (мин 63*256, макс 65535)
             if (options.PrimarySize > 0)
@@ -121,6 +122,25 @@ namespace FBINSTSharp.Core.Services
             for (uint i = 0; i < sectorsToClear; i++)
             {
                 await _diskIo.WriteSectorsAsync(i, zeroBuffer);
+            }
+        }
+
+        private async Task WriteBootCodeAsync(FbFormatParameters parameters)
+        {
+            byte[] bootCode = BootCodeProvider.GetBootCode();
+            uint sectorsToWrite = (uint)(parameters.BaseSector + 1);
+
+            // Проверяем, что код не короче, чем нужно
+            if (bootCode.Length < sectorsToWrite * 512)
+                throw new InvalidOperationException($"Boot code too short: {bootCode.Length} bytes, need {sectorsToWrite * 512}");
+
+            // Записываем загрузочный код в сектора от 0 до boot_base
+            for (uint i = 0; i < sectorsToWrite; i++)
+            {
+                byte[] sectorData = new byte[512];
+                int offset = (int)(i * 512);
+                Array.Copy(bootCode, offset, sectorData, 0, 512);
+                await _diskIo.WriteSectorsAsync(i, sectorData);
             }
         }
 

@@ -47,17 +47,20 @@
     <Compile Include="Core\Interfaces\IDiskIoService.cs" />
     <Compile Include="Core\Models\FormatOptions.cs" />
     <Compile Include="Core\Parsers\FormatCommandParser.cs" />
+    <Compile Include="Core\Services\BootCodeProvider.cs" />
     <Compile Include="Core\Services\DiskIoService.cs" />
     <Compile Include="Core\Services\Fat32FormatterService.cs" />
     <Compile Include="Core\Services\FbFileManagerService.cs" />
     <Compile Include="Core\Services\FbFormatterService.cs" />
     <Compile Include="Core\Services\FbRestoreService.cs" />
     <Compile Include="Core\Services\FbSyncService.cs" />
+    <Compile Include="Core\Services\FbUpdateService.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
+    <EmbeddedResource Include="Resources\boot.bsf" />
   </ItemGroup>
   <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
